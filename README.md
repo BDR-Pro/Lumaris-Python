@@ -1,101 +1,141 @@
-# 🔌 Lumaris Compute Marketplace
+# 🧠 Compute Marketplace
 
-**Turn any computer into an EC2-like resource.**  
-Lumaris is a distributed compute marketplace that lets buyers submit jobs and sellers run them in isolated environments, powered by Docker (and soon via SSH).
-
----
-
-## 🚀 Overview
-
-This project enables buyers to:
-
-- Submit custom code or shell commands as jobs
-- Define environment variables and setup steps
-- Automatically execute the job in a secure Docker container
-- Retrieve outputs and track job status
-
-All jobs are handled via a robust asynchronous FastAPI + Celery backend with Redis as the broker and PostgreSQL as the job store.
+A decentralized platform where **buyers** request computational resources, and **sellers** offer their machines as secure, containerized compute environments accessible over **SSH**. Think of it as turning any machine into a lightweight **EC2 alternative**.
 
 ---
 
-## 🛠 Tech Stack
+## 📦 Features
 
-- **FastAPI** – RESTful API
-- **SQLAlchemy + PostgreSQL** – Job persistence
-- **Celery + Redis** – Task queue and background workers
-- **Docker SDK (Python)** – Secure job execution in containers
+* 🔌 **Real-time matchmaking** between buyers and online sellers
+* 🐳 **SSH-enabled Docker containers** acting as disposable VMs
+* 📡 **WebSocket-based seller heartbeat + communication**
+* 🔐 **SSH key-based access** for buyers
+* ⏳ **Auto-destruction** of VMs after timeout
+* 🧾 **Job tracking** in a PostgreSQL database (status, history)
+* 🚫 **No Celery** – moved to on-demand container creation
 
 ---
 
-## 📦 API Sample
+## ⚙️ System Overview
 
-### Submit a Job
+```mermaid
+sequenceDiagram
+    participant Buyer
+    participant API (FastAPI)
+    participant Seller Agent
+    participant Docker (on Seller)
 
-```http
-POST /jobs/submit
-````
+    Buyer->>API: Submit job (SSH key + preferences)
+    API->>Seller Agent: spawn_vm (via WebSocket)
+    Seller Agent->>Docker: run container with SSH + limits
+    Seller Agent->>API: Respond with container IP, port
+    API->>Buyer: Return SSH details
+    Note over Buyer, Docker: Buyer connects via SSH and runs code
+    Docker->>Seller Agent: Auto destroys after timeout
+```
+
+---
+
+## 🛠️ Tech Stack
+
+| Component     | Tech                           |
+| ------------- | ------------------------------ |
+| API Server    | FastAPI + SQLAlchemy (async)   |
+| Database      | PostgreSQL                     |
+| Real-time     | WebSocket (Starlette)          |
+| Compute Unit  | Docker container (SSH-enabled) |
+| Orchestration | Docker Compose                 |
+
+---
+
+## 🧪 API Endpoints
+
+### `POST /jobs/submit`
+
+Submit a new job.
 
 ```json
 {
-  "cmd": "python script.py",
-  "env": { "X": "10" },
-  "git": "https://github.com/user/myrepo.git",
-  "setup": ["pip install -r requirements.txt"]
+  "ssh_pubkey": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC...",
+  "preferred_image": "ubuntu:ssh-enabled",
+  "cpu_quota": 50000,
+  "mem_limit": "512m"
 }
 ```
 
-### Get Job Status
+Returns:
 
-```http
-GET /jobs/{job_id}
+```json
+{
+  "job_id": "uuid",
+  "seller_ip": "192.168.x.x",
+  "ssh_port": 2222,
+  "ssh_user": "root"
+}
 ```
 
 ---
 
-## ⚙️ Running the Project
+### `GET /sellers/online`
 
-1. Clone the repo
-2. Start with Docker Compose:
-
-   ```bash
-   docker-compose up --build
-   ```
-
-    This will set up the FastAPI server, Redis, and PostgreSQL.
-3. Access the API at `http://localhost:8000`
+Returns a list of currently connected sellers.
 
 ---
 
-## 📌 Roadmap
+## 🧑‍💻 Seller Setup
 
-### ✅ Current Features
+Run the seller agent on your own machine:
 
-- [x] Docker-based secure execution of arbitrary jobs
-- [x] API to submit and track job execution
-- [x] Result storage and job logging
+```bash
+python seller_agent.py --id my-machine-id
+```
 
----
+This will:
 
-### 🧠 Planned Features
-
-| Feature                            | Description                                               |
-| ---------------------------------- | --------------------------------------------------------- |
-| 🔐 SSH-based remote execution      | Run jobs on actual seller VMs using SSH instead of Docker |
-| 💻 Seller registration & heartbeat | Let sellers register and send availability updates        |
-| ⚖️ Matchmaking engine              | Match buyer jobs with optimal seller based on capacity    |
-| 💳 Resource billing system         | Charge buyers based on CPU, memory, and time              |
-| 🛡 Authentication                  | Secure endpoints with JWT tokens for buyers/sellers       |
-| 📊 Admin dashboard                 | View live job queue, seller stats, and history            |
-| 🧾 Log & file storage              | Persist logs, error traces, or result files per job       |
+* Connect to the central API via WebSocket
+* Listen for job requests
+* Spawn Docker containers with SSH access
+* Auto-destroy containers after timeout
 
 ---
 
-## 📃 License
+## 🧰 Docker Compose
 
-MIT License — Use freely with attribution.
+```bash
+docker-compose up --build
+```
+
+Runs:
+
+* `api`: FastAPI app with WebSocket + REST
+* `postgres`: stores jobs & metadata
+
+---
+
+## 🔐 Security Considerations
+
+* Only whitelisted Docker images are allowed
+* Resource limits enforced (CPU, RAM)
+* SSH only via provided public key
+* VM (container) auto-destroyed after 10 min
+
+---
+
+## 🧭 Future Roadmap
+
+* [ ] Add real VMs using Firecracker or QEMU
+* [ ] Buyer authentication (JWT/session)
+* [ ] Billing based on usage (time/resources)
+* [ ] Prometheus metrics + dashboards
+* [ ] Rate-limiting & abuse protection
 
 ---
 
 ## 🤝 Contributing
 
-Want to contribute a seller daemon, SSH job runner, or GPU support? PRs welcome!
+1. Fork the repo
+2. Add your seller machine
+3. Test real-time container provisioning
+4. Submit PRs for new provider types (e.g., Firecracker)
+
+---

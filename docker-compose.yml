@@ -1,68 +1,25 @@
-version: "3.9"
+version: '3.8'
 
 services:
   api:
     build: .
-    container_name: api
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
+      - db
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres/compute_market
-      - REDIS_BROKER_URL=redis://redis:6379/0
-      - REDIS_BACKEND_URL=redis://redis:6379/1
+      - DATABASE_URL=postgresql+asyncpg://user:password@db/dbname
     volumes:
-      - .:/app
-    dns:
-      - 8.8.8.8
-
-
-
-  celery_worker:
-    build: .
-    container_name: celery_worker
-    command: celery -A workers.celery_worker worker --loglevel=info
-    depends_on:
-      - redis
-      - postgres
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres/compute_market
-      - REDIS_BROKER_URL=redis://redis:6379/0
-      - REDIS_BACKEND_URL=redis://redis:6379/1
-    volumes:
-      - .:/app
       - /var/run/docker.sock:/var/run/docker.sock
-    dns:
-      - 8.8.8.8
 
-
-  redis:
-    image: redis:7
-    container_name: redis
-    ports:
-      - "6379:6379"
-
-  postgres:
-    image: postgres:15
-    container_name: postgres
-    restart: always
-    ports:
-      - "5432:5432"
+  db:
+    image: postgres:13
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: compute_market
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=dbname
     volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      retries: 15
-      timeout: 5s
+      - db_data:/var/lib/postgresql/data
 
 volumes:
-  pgdata:
+  db_data:

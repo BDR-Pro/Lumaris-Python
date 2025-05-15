@@ -4,10 +4,9 @@ from sqlalchemy.future import select
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 import uuid
-
+from sellers.vm_manager import destroy_vm
 from models.database import get_session
 from models.job import Job, JobStatus
-from workers.celery_worker import execute_job
 from celery.result import AsyncResult
 
 router = APIRouter()
@@ -28,29 +27,50 @@ class JobResponse(BaseModel):
 
 @router.post("/submit", response_model=JobResponse)
 async def submit_job(job: JobRequest, session: AsyncSession = Depends(get_session)):
+    if not active_sellers:
+        raise HTTPException(status_code=503, detail="No sellers available")
+
+    matched_seller_id, seller_ws = next(iter(active_sellers.items()))
     job_id = uuid.uuid4()
-    celery_task = execute_job.delay(
-        job.cmd,
-        job.env,
-        job.git,
-        job.setup,
-        job.image,
-        job.mem_limit,
-        job.cpu_quota
-    )
 
-    new_job = Job(
-        id=job_id,
-        code=job.cmd,
-        input_data=job.git or "",
-        status=JobStatus.QUEUED,
-        celery_id=celery_task.id
-    )
+    try:
+        await seller_ws.send_json({
+            "type": "spawn_vm",
+            "job_id": str(job_id),
+            "ssh_pubkey": job.ssh_pubkey,
+            "image": job.preferred_image,
+            "cpu_quota": job.cpu_quota,
+            "mem_limit": job.mem_limit
+        })
 
-    session.add(new_job)
-    await session.commit()
+        response = await seller_ws.receive_json()
 
-    return JobResponse(job_id=str(job_id), status=JobStatus.QUEUED)
+        if response.get("status") != "ok":
+            raise HTTPException(status_code=500, detail="Seller failed to provision VM")
+
+        new_job = Job(
+            id=job_id,
+            cmd="ssh execution",
+            env={},
+            git=None,
+            setup=[],
+            status=JobStatus.QUEUED,
+            output=None,
+            celery_id=None,
+            vm_container_id=response.get("container_id")  # optional tracking
+        )
+        session.add(new_job)
+        await session.commit()
+
+        return JobResponse(
+            job_id=str(job_id),
+            seller_ip=response["ip"],
+            ssh_port=response["port"],
+            ssh_user=response["user"]
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error contacting seller: {str(e)}")
 
 @router.get("/{job_id}")
 async def get_job_status(job_id: str, session: AsyncSession = Depends(get_session)):
@@ -85,8 +105,44 @@ async def list_jobs(session: AsyncSession = Depends(get_session)):
         {
             "job_id": str(job.id),
             "status": job.status,
-            "input_data": job.input_data,
-            "output": job.output or None
+            "cmd": job.cmd,
+            "env": job.env,
+            "git": job.git,
+            "setup": job.setup,
+            "output": job.output,
         }
         for job in jobs
     ]
+
+@router.post("/jobs/{job_id}/destroy")
+async def destroy_job(job_id: str, session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(Job).where(Job.id == uuid.UUID(job_id)))
+    job = result.scalar_one_or_none()
+
+    if not job or not job.vm_container_id:
+        raise HTTPException(status_code=404, detail="Job or VM not found")
+    # call the WS to check if the seller is available
+    active_sellers = active_sellers_dict()  # This should be your active sellers dict
+    seller_ws = next(iter(active_sellers.values()), None)
+    if not seller_ws:
+        raise HTTPException(status_code=503, detail="Seller unavailable")
+
+    await seller_ws.send_json({"type": "destroy_vm", "job_id": job_id})
+    data = await seller_ws.receive_json()
+
+    if data.get("status") != "ok":
+        raise HTTPException(status_code=500, detail=f"Failed to destroy: {data.get('error')}")
+
+    job.status = JobStatus.COMPLETED
+    await session.commit()
+
+    return {"detail": "VM destroyed successfully"}
+
+
+@router.post("/jobs/{job_id}/terminate")
+async def terminate_vm(job_id: str):
+    try:
+        await destroy_vm(job_id)  # from vm_manager
+        return {"status": "terminated"}
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))

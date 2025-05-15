@@ -1,7 +1,6 @@
 fastapi
-uvicorn[standard]
+uvicorn
 sqlalchemy[asyncio]
 asyncpg
-celery
-redis
+pydantic
 docker
